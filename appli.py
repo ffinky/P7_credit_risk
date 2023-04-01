@@ -1,7 +1,8 @@
 #######################
 # Import des packages #
 #######################
-# Built-in packages : format JSON pour échange de data via le web + requête URL (API de calcul du score de probabilité d'octroi)
+# Built-in packages : format JSON pour échange de data via le web + requête URL 
+# API de calcul du score de probabilité d'octroi selon le modèle choisi (Regression log / Light GBM)
 import json
 import requests
 from PIL import Image
@@ -17,7 +18,7 @@ import plotly.graph_objects as go
 import plotly.figure_factory as ff
 import matplotlib.pyplot as plt
 
-# Import d'objets SHAPE déserialisés 
+# Import d'objets SHAPE à déserialiser pour l'analyse shape locale
 import pickle # sérialisation / déserialisation
 from shap import LinearExplainer
 from shap import waterfall_plot, summary_plot
@@ -39,16 +40,11 @@ from sklearn.feature_selection import SelectKBest, f_classif
 # Données du TEST set pour l'application (échantillon de 100 individus avec 1 distribution de 50% par classe)
 @st.cache_data
 def fct_get_data():
-    #df_appli = pd.read_csv('df_scenario_0.csv')
     df_appli = pd.read_csv('df_appli_test.csv')
     df_appli.drop('Unnamed: 0', axis=1, inplace=True)
-    #df_appli_0 = df_appli[df_appli['TARGET']==0][:50] # Ocroi
-    #df_appli_1 = df_appli[df_appli['TARGET']==1][:50] # Refus
-    #df_appli = pd.concat([df_appli_0, df_appli_1], axis=0, ignore_index=True)
-    #print(f'Dimensions : {df_appli.shape}')
     return df_appli
 
-# Extract des objets shape selon le modèle choisi pour analyse des features locales
+# Extract des objets shape selon le modèle choisi pour analyse de l'impacte des features locales sur la target
 @st.cache_data
 def fct_get_shap_value():
     log_shap_values = pickle.load(open('log_shap_values.p', 'rb'))
@@ -56,7 +52,7 @@ def fct_get_shap_value():
     lgbm_shap_values = pickle.load(open('lgbm_shap_values.p', 'rb'))
     return log_shap_values, lgbm_explainer, lgbm_shap_values
 
-# Liste des Features importance dans l'ordre décroissant selon les modèles Log et LGBM 
+# Liste des 50 Features importance dans l'ordre décroissant selon les modèles Log et LGBM 
 @st.cache_data
 def fct_get_feat_importance():
     df_log_feat_importance = pd.read_csv('df_log_feat_importance.csv')
@@ -120,7 +116,6 @@ def fct_extract_feat(sk_id_curr):
 ###########
 # jauge avec la valeur du score de prédiction retournée par l'API 
 def fct_jauge_score(score):
-    #reference = 2*score - 0.5
     fig_jauge_score = go.Figure(go.Indicator(mode='gauge+number+delta',
                                              value=score,
                                              domain={'x' : [0,1], 'y' : [0,1]},
@@ -139,19 +134,21 @@ def fct_jauge_score(score):
     fig_jauge_score.update_layout(showlegend=False,
                                   height=300,
                                   margin={'l':30, 'r':30, 't':40, 'b':40})
-    #fig_jauge_score.update_traces(textposition='inside', textinfo='label+percent')
     return fig_jauge_score
 
-# Graphe de distribution pour 1 feature importance (feat) par classe prédite (octroi/refus) selon le modèle choisi
+# Graphe de distribution pour 1 feature importance (feat) par classe réelle (TARGET) selon le modèle choisi
 def fct_dist_feat(feat):
+    #var_score_pred = 'log_score_pred' if model_selected == 'Reg Logistique' else 'lgbm_score_pred'
+    #feat_0 = df_appli[df_appli[var_score_pred] < 0.5][feat].values.tolist()
+    #feat_1 = df_appli[df_appli[var_score_pred] >= 0.5][feat].values.tolist()
+    
     # liste des data des classe 0 (octroi) et 1 (refus)
-    var_score_pred = 'log_score_pred' if model_selected == 'Reg Logistique' else 'lgbm_score_pred'
-    feat_0 = df_appli[df_appli[var_score_pred] < 0.5][feat].values.tolist()
-    feat_1 = df_appli[df_appli[var_score_pred] >= 0.5][feat].values.tolist()
+    feat_0 = df_appli[df_appli['TARGET'] == 0][feat].values.tolist()
+    feat_1 = df_appli[df_appli['TARGET'] == 1][feat].values.tolist()
     feat_0_1 = [feat_0, feat_1]  
     classes = ['Ocroi', 'Refus']
     
-    # Distribution par classes
+    # Distribution de la featue feat par classes
     fig_feat = ff.create_distplot(feat_0_1, group_labels=classes, 
                                   colors=['green', 'red'],
                                   show_hist=False, show_rug=False, 
@@ -161,10 +158,12 @@ def fct_dist_feat(feat):
                            legend=dict(yanchor='top', y=0.99,
                                        xanchor='right', x=0.99))
     
-    # Ajout du positionnement client : droite verticale au point X (val_feat) de la demande d'octroi
+    # Ajout du positionnement client : droite verticale au point X (val_feat)
+    #val_score_pred = df_appli.loc[df_appli['SK_ID_CURR']==sk_id_curr_selected, var_score_pred].values[0]
+    #line_color = 'red' if val_score_pred >= 0.5 else 'green'  
     val_feat = df_appli.loc[df_appli['SK_ID_CURR']==sk_id_curr_selected, feat].values[0]
-    val_score_pred = df_appli.loc[df_appli['SK_ID_CURR']==sk_id_curr_selected, var_score_pred].values[0]
-    line_color = 'red' if val_score_pred >= 0.5 else 'green'  
+    val_target = df_appli.loc[df_appli['SK_ID_CURR']==sk_id_curr_selected, 'TARGET'].values[0]
+    line_color = 'red' if val_target == 1 else 'green'
     fig_feat.add_vline(x=val_feat,  line_dash='dash', line_color=line_color, annotation_text='client')
     return fig_feat
 
@@ -178,7 +177,7 @@ def fct_position_individu(model_selected):
     fig_position = px.scatter(df, x=feat1_selected, y=feat2_selected, 
                               #color_discrete_sequence=['green', 'red'], 
                               #color='TARGET',
-                              color='log_score_pred' if model_selected=='Reg Logistique' else 'lgbm_score_pred',  
+                              color='log_score_pred' if model_selected == 'Reg Logistique' else 'lgbm_score_pred',  
                               labels = ['Ocroi', 'Refus'],
                               size='size')
     fig_position.update_layout(height=300, width=500,
@@ -193,7 +192,7 @@ def fct_shap_local(sk_id_curr_selected, model_selected, max_display=50):
     row = df_appli[df_appli['SK_ID_CURR']==sk_id_curr_selected].index.values[0]
     fig = plt.figure(figsize=(12,5))
     if model_selected == 'Reg Logistique':
-        waterfall_plot(log_shap_values[row], max_display=max_display, show=True)
+        waterfall_plot(log_shap_values[row], max_display=max_display, show=False)
         #plt.savefig('shap_explainer_local.png')
         #image = Image.open('shap_explainer_local.png')
         #return image
@@ -201,7 +200,8 @@ def fct_shap_local(sk_id_curr_selected, model_selected, max_display=50):
         shap_plots._waterfall.waterfall_legacy(lgbm_explainer.expected_value[0],
                                                lgbm_shap_values[row].values[:,0],
                                                feature_names=feats,
-                                               max_display=max_display)
+                                               max_display=max_display,
+                                               show=False)
     return fig
 
 # Graphe de l'impacte moyen des features globales sur le score d'octroi de crédit
@@ -223,7 +223,7 @@ def fct_shap_global(model_selected):
 #########################################################
 def fct_API_score_calculate(model_selected, dict_feats):
     if st.sidebar.button('Score calculate', help='Appel 1 API pour calculer le score de prédiction'):
-        # imputs au format json
+        # inputs au format json
         inputs = {'classifier_name' : model_selected,
                   'features' : dict_feats
         }
@@ -247,7 +247,7 @@ nb_refus = df_appli[df_appli['TARGET']==1].shape[0]
 nb_octrois = df_appli[df_appli['TARGET']==0].shape[0]
 data_load_state.text(f"Chargement des data réussi : {nb_octrois} octrois / {nb_refus} refus !")
 
-# Init des features importance
+# Init des 50 premieres features importance
 log_feat_importance, lgbm_feat_importance, feats = fct_get_feat_importance()
 log_shap_values, lgbm_explainer, lgbm_shap_values = fct_get_shap_value()
 
@@ -278,7 +278,7 @@ feat1_selected, feat2_selected = fct_select_feats_importance(model_selected, max
 if score_pred != None:
     status_credit_pred = 'octroi crédit' if score_pred < 0.5 else 'refus crédit'
     status_credit_true = '(réel : octroi)' if target == 0 else '(réel : refus)'
-    st.subheader(f'Réponse API = {status_credit_pred} {status_credit_true}')
+    st.subheader(f'Réponse API de prédiction = {status_credit_pred} {status_credit_true}')
     fig_jauge_score = fct_jauge_score(score_pred)
     st.plotly_chart(fig_jauge_score, use_container_width=True)
 
